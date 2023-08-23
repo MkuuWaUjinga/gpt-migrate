@@ -74,6 +74,11 @@ INCLUDED_EXTENSIONS = (
     # TODO: add more
 )
 
+MODEL_TO_MAX_TOKENS = {
+    'gpt-4': 1000, #8192,
+    'gpt-4-32k': 32768,
+}
+
 TREE_SITTER_REPO_STUB = "https://github.com/tree-sitter/tree-sitter-"
 
 EXTENSION_TO_TREE_SITTER_GRAMMAR_REPO = {

@@ -4,6 +4,7 @@ from yaspin import yaspin
 from pathlib import Path
 from tree_sitter import Language, Parser, Node
 from collections.abc import Iterator
+from typing import List
 
 from config import EXTENSION_TO_TREE_SITTER_GRAMMAR_REPO, EXTENSION_TO_LANGUAGE
 
@@ -46,3 +47,39 @@ def decompose_file(file_path: str) -> Iterator[Node]:
         
         spinner.ok("✅ ")
 
+def get_identifiers(node: Node, only_outer_scope=False) -> Node:
+    # Do a breadth-first search of the parse tree to find all identifiers
+    outer_scope_level = None
+    queue = [(node, 0)]
+    while queue:
+        node, level = queue.pop(0)
+        if only_outer_scope and outer_scope_level is not None and level > outer_scope_level:
+            return
+        if node.type == 'identifier': # TODO: might be brittle. Some language grammars potentially don't have this node type.
+            yield node.text
+            if only_outer_scope:
+                outer_scope_level = level
+        
+        for child in node.children:
+            queue.append((child, level + 1))
+            
+def get_in_file_deps(nodes: List[Node]):
+    top_level_identifiers = [set(get_identifiers(node, only_outer_scope=True)) for node in nodes]
+    in_file_deps = []
+    for i, node in enumerate(nodes):
+        node_infile_deps = []
+        for j, top_level_identifier in enumerate(top_level_identifiers):
+            for identifier in get_identifiers(node):
+                # Add code snippet if top-level identifier is used in current node and is not the same node
+                if identifier in top_level_identifier and i != j:
+                    node_infile_deps.append(nodes[j].text)
+        # Remove potential duplicates
+        in_file_deps.append(list(dict.fromkeys(node_infile_deps)))
+    return in_file_deps
+
+if __name__ == "__main__":
+    from parser import decompose_file
+    nodes = list(decompose_file("test.py"))
+    print(nodes)
+    deps = get_in_file_deps(nodes)
+    print(deps)

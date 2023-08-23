@@ -1,5 +1,7 @@
-from utils import prompt_constructor, llm_write_file, llm_run, build_directory_structure, copy_files, write_to_memory, read_from_memory, file_exists_in_memory, convert_sigs_to_string
-from config import HIERARCHY, GUIDELINES, WRITE_CODE, GET_EXTERNAL_DEPS, GET_INTERNAL_DEPS, ADD_DOCKER_REQUIREMENTS, REFINE_DOCKERFILE, WRITE_MIGRATION, SINGLEFILE, EXCLUDED_FILES, GET_FUNCTION_SIGNATURES
+import time
+from utils import prompt_constructor, llm_write_file, llm_run, build_directory_structure, copy_files, write_to_memory, read_from_memory, file_exists_in_memory, convert_sigs_to_string, get_number_of_tokens, fits_into_context_window
+from config import HIERARCHY, GUIDELINES, WRITE_CODE, GET_EXTERNAL_DEPS, GET_INTERNAL_DEPS, ADD_DOCKER_REQUIREMENTS, REFINE_DOCKERFILE, WRITE_MIGRATION, SINGLEFILE, EXCLUDED_FILES, GET_FUNCTION_SIGNATURES, MODEL_TO_MAX_TOKENS
+from parser import decompose_file  
 from typing import List
 import os
 import json
@@ -40,6 +42,8 @@ def get_function_signatures(targetfiles: List[str], globals):
 
     return all_sigs
 
+RESPONSE_MAX_TOKENS_GET_DEPENDENCIES = 300 
+
 def get_dependencies(sourcefile, globals):
 
     ''' Get external and internal dependencies of source file '''
@@ -55,19 +59,43 @@ def get_dependencies(sourcefile, globals):
                                                     sourcelang=globals.sourcelang, 
                                                     sourcefile_content=sourcefile_content)
 
-    external_dependencies = llm_run(prompt,
+    needed_token_budget = get_number_of_tokens(prompt, globals.ai.model_name) + RESPONSE_MAX_TOKENS_GET_DEPENDENCIES
+    print(needed_token_budget)
+    print(MODEL_TO_MAX_TOKENS[globals.ai.model_name])
+    if needed_token_budget > MODEL_TO_MAX_TOKENS[globals.ai.model_name]:
+        external_deps_list = set()
+        for node in decompose_file(os.path.join(globals.sourcedir, sourcefile)):
+            prompt = external_deps_prompt_template.format(targetlang=globals.targetlang,
+                                                          sourcelang=globals.sourcelang,
+                                                          sourcefile_content=str(node.text))
+            print("new token budget: {}".format(get_number_of_tokens(prompt, globals.ai.model_name) + RESPONSE_MAX_TOKENS_GET_DEPENDENCIES))
+            partial_external_dependencies = llm_run(prompt,
                             waiting_message=f"Identifying external dependencies for {sourcefile}...",
                             success_message=None,
                             globals=globals)
-    
-    external_deps_list = external_dependencies.split(',') if external_dependencies != "NONE" else []
+            print("found external deps for snippet {} are:".format(node.text))
+            print(partial_external_dependencies)
+
+            if partial_external_dependencies != "NONE":
+                external_deps_list.update(partial_external_dependencies.split(','))
+            time.sleep(10) # openai rate limit
+        external_deps_list = list(external_deps_list)
+            
+    else:
+        external_deps_list = llm_run(prompt,
+                                waiting_message=f"Identifying external dependencies for {sourcefile}...",
+                                success_message=None,
+                                globals=globals)
+        external_deps_list = list(dict.fromkeys(external_deps_list.split(',') if external_deps_list != "NONE" else []))
+
+    print(external_deps_list)
     write_to_memory("external_dependencies",external_deps_list)
 
     prompt = internal_deps_prompt_template.format(targetlang=globals.targetlang,
-                                                    sourcelang=globals.sourcelang,
-                                                    sourcefile=sourcefile,
-                                                    sourcefile_content=sourcefile_content,
-                                                    source_directory_structure=globals.source_directory_structure)
+                                                  sourcelang=globals.sourcelang,
+                                                  sourcefile=sourcefile,
+                                                  sourcefile_content=sourcefile_content,
+                                                  source_directory_structure=globals.source_directory_structure)
     
     internal_dependencies = llm_run(prompt,
                             waiting_message=f"Identifying internal dependencies for {sourcefile}...",

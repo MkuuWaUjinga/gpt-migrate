@@ -1,12 +1,13 @@
 import os
 import typer
+import tiktoken
 from yaspin import yaspin
 from pathlib import Path
 from collections import Counter
 import fnmatch
 import re
 import shutil
-from config import INCLUDED_EXTENSIONS, EXTENSION_TO_LANGUAGE
+from config import INCLUDED_EXTENSIONS, EXTENSION_TO_LANGUAGE, MODEL_TO_MAX_TOKENS
 
 def detect_language(source_directory):
 
@@ -215,3 +216,11 @@ def find_and_replace_file(filepath,find,replace):
     testfile_content = testfile_content.replace(find,replace)
     with open(filepath, 'w') as file:
         file.write(testfile_content)
+
+def get_number_of_tokens(string, model_name):
+    encoding = tiktoken.encoding_for_model(model_name) 
+    return len(encoding.encode(string))
+
+def fits_into_context_window(prompt, response_max_tokens, model_name):
+    prompt_tokens = get_number_of_tokens(prompt, model_name)
+    return prompt_tokens + response_max_tokens < MODEL_TO_MAX_TOKENS[model_name]
